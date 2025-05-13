@@ -1,0 +1,69 @@
+name: Update & Deploy breadth.csv
+
+on:
+  schedule:
+    - cron: '0 * * * *'     # top of every hour
+  workflow_dispatch:       # manual trigger
+
+permissions:
+  contents: write           # allow commit back to main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Compute breadth & update CSV
+        run: |
+          python - <<'PYCODE'
+          import requests, csv, time, os
+          
+          # Fetch top-200 altcoins from CoinGecko
+          CG_URL = "https://api.coingecko.com/api/v3/coins/markets"
+          PARAMS = {
+            "vs_currency":"usd",
+            "order":"market_cap_desc",
+            "per_page":200,
+            "page":1,
+            "price_change_percentage":"24h"
+          }
+          data = requests.get(CG_URL, params=PARAMS).json()
+          adv = sum(1 for c in data if c.get("price_change_percentage_24h", 0) > 0)
+          dec = sum(1 for c in data if c.get("price_change_percentage_24h", 0) < 0)
+          ratio = adv/dec if dec else 0
+
+          fn = "breadth.csv"
+          write_header = not os.path.exists(fn)
+          with open(fn, "a", newline="") as f:
+              w = csv.writer(f)
+              if write_header:
+                  w.writerow(["time","ratio"])
+              w.writerow([int(time.time()), ratio])
+          PYCODE
+
+      - name: Commit CSV update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add breadth.csv
+          git diff --cached --quiet || git commit -m "chore: update breadth.csv [skip ci]"
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: .
