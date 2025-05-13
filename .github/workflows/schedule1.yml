@@ -1,0 +1,53 @@
+name: altcoin-breadth
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  update-breadth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Compute breadth & write CSV
+        run: |
+          python - <<'PYCODE'
+          import requests, csv, time, os
+
+          CG_URL = "https://api.coingecko.com/api/v3/coins/markets"
+          PARAMS = {"vs_currency":"usd","order":"market_cap_desc","per_page":200,"page":1,"price_change_percentage":"24h"}
+
+          data = requests.get(CG_URL, params=PARAMS).json()
+          adv = sum(1 for c in data if c.get("price_change_percentage_24h",0) > 0)
+          dec = sum(1 for c in data if c.get("price_change_percentage_24h",0) < 0)
+          ratio = adv/dec if dec else 0
+
+          # write breadth.csv with header if not exists
+          filename = "breadth.csv"
+          write_header = not os.path.exists(filename)
+          with open(filename, "a", newline="") as f:
+              writer = csv.writer(f)
+              if write_header:
+                  writer.writerow(["time","ratio"])
+              writer.writerow([int(time.time()), ratio])
+          PYCODE
+
+      - name: Commit & Push CSV
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add breadth.csv
+          git commit -m "Update breadth.csv [skip ci]" || echo "No changes"
+          git push origin HEAD:gh-pages
